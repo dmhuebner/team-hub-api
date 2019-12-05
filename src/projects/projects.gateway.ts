@@ -7,7 +7,7 @@ import {
   WebSocketGateway,
   WsResponse,
 } from '@nestjs/websockets';
-import { HttpService, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ProjectsService } from './projects.service';
 import ProjectsMonitorConfig from './interfaces/projectsMonitorConfig.interface';
@@ -20,8 +20,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   private logger: Logger = new Logger('ProjectsGateway');
   projectsSocket: Socket;
 
-  constructor(private projectsService: ProjectsService,
-              private http: HttpService) {}
+  constructor(private projectsService: ProjectsService) {}
 
   afterInit(server: Server) {
     this.logger.log('Initialized');

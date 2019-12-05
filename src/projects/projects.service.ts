@@ -6,6 +6,7 @@ import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
 import HealthCheck from './interfaces/healthCheck.interface';
 import StatusOverview from './interfaces/statusOverview.interface';
 import { ProjectStatus } from './interfaces/projectStatus.interface';
+import CustomAxiosRequestConfig from './interfaces/customAxiosRequestConfig.interface';
 
 @Injectable()
 export class ProjectsService {
@@ -36,14 +37,14 @@ export class ProjectsService {
     const timestamp = new Date().toISOString();
     let up = false;
     const warning = null;
-    return this.http.get(healthCheck.path).pipe(
+    return this.getHealthCheckCall(healthCheck).pipe(
       map((res): HealthCheckStatus => {
         up = healthCheck.successStatuses.includes(res.status);
         return {
           responseBody: res.data,
           status: res.status,
           path: healthCheck.path,
-          method: 'GET',
+          method: healthCheck.method,
           timestamp,
           up,
           projectName,
@@ -63,7 +64,7 @@ export class ProjectsService {
           responseBody,
           status,
           path: healthCheck.path,
-          method: 'GET',
+          method: healthCheck.method,
           timestamp,
           up,
           projectName,
@@ -84,5 +85,20 @@ export class ProjectsService {
       }
       return acc;
     }, {});
+  }
+
+  private getHealthCheckCall(healthCheck: HealthCheck): Observable<any> {
+    const config: CustomAxiosRequestConfig = {};
+    if (healthCheck.headers) {
+      config.headers = healthCheck.headers;
+    }
+    switch (healthCheck.method.toLowerCase()) {
+      case 'post':
+        return this.http.post(healthCheck.path, healthCheck.requestBody, config);
+      case 'put':
+        return this.http.put(healthCheck.path, healthCheck.requestBody, config);
+      default:
+        return this.http.get(healthCheck.path, config);
+    }
   }
 }

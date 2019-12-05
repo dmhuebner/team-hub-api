@@ -1,72 +1,67 @@
-import { HttpException, HttpService, Injectable, Logger } from '@nestjs/common';
+import { HttpService, Injectable, Logger } from '@nestjs/common';
 import Project from './interfaces/project.interface';
-import HealthCheck from './interfaces/healthCheck.interface';
-import { BehaviorSubject, forkJoin, from, interval, Observable, of, Subject } from 'rxjs';
-import { catchError, combineLatest, map, shareReplay, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { forkJoin, interval, Observable, of } from 'rxjs';
+import { catchError, map, startWith, switchMap, tap } from 'rxjs/operators';
+import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
 
 @Injectable()
 export class ProjectsService {
 
   constructor(private http: HttpService) {}
 
-  logger: Logger = new Logger('ProjectsService');
-
-  // monitor(projects: Project[]) {
-  //   return projects;
-  // }
-
-  // initHealthCheckLoop(projectName: string, intervalLength: number, healthCheck: HealthCheck): Observable<any> {
-  //   // return interval(intervalLength).pipe(
-  //   //   startWith(this.getHealthCheckStatus(projectName, healthCheck)),
-  //   //   switchMap(() => this.getHealthCheckStatus(projectName, healthCheck)),
-  //   //   shareReplay(1),
-  //   // );
-  //   return this.getHealthCheckStatus(projectName, healthCheck);
-  // }
-  //
-  // getHealthCheckStatus(projectName, healthCheck: HealthCheck): Observable<any> {
-  //   return this.http.get(healthCheck.path).pipe(
-  //     map(res => ({body: res.data, status: res.status})),
-  //     catchError(errResp => {
-  //       return of(errResp);
-  //     }),
-  //   );
-  // }
-  //
-  // getAllHealthChecks(projectsConfig: Project[], intervalLength: number, healthCheckCalls = []) {
-  //   projectsConfig.forEach(projConfig => {
-  //     healthCheckCalls.push(this.initHealthCheckLoop(projConfig.name, intervalLength, projConfig.healthCheck));
-  //     if (projConfig.dependencies && projConfig.dependencies.length) {
-  //       this.getAllHealthChecks(projConfig.dependencies, intervalLength, healthCheckCalls);
-  //     }
-  //   });
-  //   return healthCheckCalls;
-  // }
+  private logger: Logger = new Logger('ProjectsService');
 
   monitorProjects(projects: Project[], intervalLength: number): Observable<any> {
-    // const healthChecks = this.getAllHealthChecks(projects, intervalLength);
-    // return forkJoin(...healthChecks);
-    this.logger.debug('intervalLength: ' + String(intervalLength));
-    this.logger.debug(projects);
     return interval(intervalLength).pipe(
-      startWith(() => this.getHealthCheck(projects[0].healthCheck.path)),
-      switchMap(() => this.getHealthCheck(projects[0].healthCheck.path)),
+      startWith(() => this.getAllHealthChecks(projects)),
+      switchMap(() => this.getAllHealthChecks(projects)),
     );
   }
 
-  getHealthCheck(path: string): any | Observable<any> {
+  private getAllHealthChecks(projectsConfig: Project[], healthCheckCalls = []): Observable<any> {
+    projectsConfig.forEach(projConfig => {
+      healthCheckCalls.push(this.getHealthCheck(projConfig.healthCheck.path, projConfig.name));
+      if (projConfig.dependencies && projConfig.dependencies.length) {
+        this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
+      }
+    });
+    return forkJoin(healthCheckCalls);
+  }
+
+  private getHealthCheck(path: string, projectName: string): any | Observable<HealthCheckStatus> {
+    const timestamp = new Date().toISOString();
+    // TODO check if its up based on successStatuses
+    const up = null;
     return this.http.get(path).pipe(
       tap(res => this.logger.debug(JSON.stringify(res.status))),
-      map(res => ({body: res.data, status: res.status})),
-      catchError(err => {
-        const body = err && err.message ? err.message : err;
+      map((res): HealthCheckStatus => {
+        return {
+          responseBody: res.data,
+          status: res.status,
+          path,
+          method: 'GET',
+          timestamp,
+          up,
+          projectName,
+        };
+      }),
+      catchError((err): Observable<HealthCheckStatus> => {
+        const responseBody = err && err.message ? err.message : err;
         const splitErrorMessage = err && err.message && err.message.split(' ').length ? err.message.split(' ') : [];
         let status = Number(splitErrorMessage[splitErrorMessage.length - 1]);
         if (!err.message.includes(('status code').toLowerCase()) || isNaN(status)) {
           // If message does not include 'status code' text or if last word is not a status - set status to null;
           status = null;
         }
-        return of({ body, status });
+        return of({
+          responseBody,
+          status,
+          path,
+          method: 'GET',
+          timestamp,
+          up,
+          projectName,
+        });
       }),
     );
   }

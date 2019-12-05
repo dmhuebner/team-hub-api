@@ -3,6 +3,7 @@ import Project from './interfaces/project.interface';
 import { forkJoin, interval, Observable, of } from 'rxjs';
 import { catchError, map, startWith, switchMap, tap } from 'rxjs/operators';
 import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
+import HealthCheck from './interfaces/healthCheck.interface';
 
 @Injectable()
 export class ProjectsService {
@@ -20,7 +21,7 @@ export class ProjectsService {
 
   private getAllHealthChecks(projectsConfig: Project[], healthCheckCalls = []): Observable<any> {
     projectsConfig.forEach(projConfig => {
-      healthCheckCalls.push(this.getHealthCheck(projConfig.healthCheck.path, projConfig.name));
+      healthCheckCalls.push(this.getHealthCheck(projConfig.healthCheck, projConfig.name));
       if (projConfig.dependencies && projConfig.dependencies.length) {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
@@ -28,17 +29,16 @@ export class ProjectsService {
     return forkJoin(healthCheckCalls);
   }
 
-  private getHealthCheck(path: string, projectName: string): any | Observable<HealthCheckStatus> {
+  private getHealthCheck(healthCheck: HealthCheck, projectName: string): any | Observable<HealthCheckStatus> {
     const timestamp = new Date().toISOString();
-    // TODO check if its up based on successStatuses
-    const up = null;
-    return this.http.get(path).pipe(
-      tap(res => this.logger.debug(JSON.stringify(res.status))),
+    let up = false;
+    return this.http.get(healthCheck.path).pipe(
       map((res): HealthCheckStatus => {
+        up = healthCheck.successStatuses.includes(res.status);
         return {
           responseBody: res.data,
           status: res.status,
-          path,
+          path: healthCheck.path,
           method: 'GET',
           timestamp,
           up,
@@ -53,10 +53,11 @@ export class ProjectsService {
           // If message does not include 'status code' text or if last word is not a status - set status to null;
           status = null;
         }
+        up = healthCheck.successStatuses.includes(status);
         return of({
           responseBody,
           status,
-          path,
+          path: healthCheck.path,
           method: 'GET',
           timestamp,
           up,

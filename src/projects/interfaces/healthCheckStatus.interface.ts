@@ -8,4 +8,5 @@ export default interface HealthCheckStatus {
   timestamp: string;
   up: boolean;
   projectName: string;
+  warning: boolean;
 }

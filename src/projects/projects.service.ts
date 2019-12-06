@@ -81,7 +81,9 @@ export class ProjectsService {
       };
       if (project.dependencies && project.dependencies.length) {
         acc[project.name].dependencies = this.getStatusOverview(healthCheckStatuses, project.dependencies);
-        acc[project.name].status.warning = Object.values(acc[project.name].dependencies).some((dep: ProjectStatus) => !dep.status.up);
+        acc[project.name].status.warning = Object.values(acc[project.name].dependencies).some((dep: ProjectStatus) => {
+          return !dep.status.up || dep.status.warning;
+        });
       }
       return acc;
     }, {});

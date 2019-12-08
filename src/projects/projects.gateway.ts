@@ -11,14 +11,15 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ProjectsService } from './projects.service';
 import ProjectsMonitorConfig from './interfaces/projectsMonitorConfig.interface';
-import { Observable, of } from 'rxjs';
-import { catchError, map, tap } from 'rxjs/operators';
+import { Observable, of, Subject } from 'rxjs';
+import { catchError, map, takeUntil, tap } from 'rxjs/operators';
 
 @WebSocketGateway(5005, { namespace: 'projects-monitor' })
 export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
 
   private logger: Logger = new Logger('ProjectsGateway');
   projectsSocket: Socket;
+  unsubscribe$ = new Subject();
 
   constructor(private projectsService: ProjectsService) {}
 
@@ -33,6 +34,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   handleDisconnect(client: Socket): any {
     this.logger.log(`Client disconnected: ${client.id}`);
+    this.unsubscribe$.next(true);
   }
 
   @SubscribeMessage('msgToServer')
@@ -42,6 +44,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     this.logger.debug('received msgToServer\n' + JSON.stringify(parsedProjectConfigs.projects[0]));
     return this.monitorProjects(parsedProjectConfigs.projects, parsedProjectConfigs.intervalLength).pipe(
       map(data => ({event: 'msgToClient', data})),
+      takeUntil(this.unsubscribe$),
     );
   }
 

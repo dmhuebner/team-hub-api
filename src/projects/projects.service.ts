@@ -85,8 +85,8 @@ export class ProjectsService {
       const projectHealthCheckStatuses = healthCheckStatuses.filter(hcStatus => hcStatus.projectName === project.name);
       acc[project.name] = {
         statuses: projectHealthCheckStatuses,
-        up: projectHealthCheckStatuses.every(hcStatus => hcStatus.up),
-        warning: projectHealthCheckStatuses.some(hcStatus => hcStatus.warning),
+        up: projectHealthCheckStatuses.some(hcStatus => hcStatus.up),
+        warning: projectHealthCheckStatuses.some(hcStatus => !hcStatus.up),
       };
       if (project.dependencies && project.dependencies.length) {
         acc[project.name].dependencies = this.getStatusOverview(healthCheckStatuses, project.dependencies);

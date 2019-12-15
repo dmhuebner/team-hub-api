@@ -2,6 +2,9 @@ import HealthCheckStatus from './healthCheckStatus.interface';
 import StatusOverview from './statusOverview.interface';
 
 export interface ProjectStatus {
-  status: HealthCheckStatus;
+  projectName: string;
+  up: boolean;
+  warning: boolean;
+  statuses: HealthCheckStatus[];
   dependencies?: StatusOverview[];
 }

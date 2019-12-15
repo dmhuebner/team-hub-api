@@ -25,7 +25,10 @@ export class ProjectsService {
 
   private getAllHealthChecks(projectsConfig: Project[], healthCheckCalls = []): Observable<any> {
     projectsConfig.forEach(projConfig => {
-      healthCheckCalls.push(this.getHealthCheck(projConfig.healthCheck, projConfig.name));
+      projConfig.healthChecks.forEach(healthCheck => {
+        healthCheckCalls.push(this.getHealthCheck(healthCheck, projConfig.name));
+      });
+
       if (projConfig.dependencies && projConfig.dependencies.length) {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
@@ -33,6 +36,7 @@ export class ProjectsService {
     return forkJoin(healthCheckCalls);
   }
 
+  // Makes an individual healthCheck call and returns an Observable of a HealthCheckStatus
   private getHealthCheck(healthCheck: HealthCheck, projectName: string): Observable<HealthCheckStatus> {
     const timestamp = new Date().toISOString();
     let up = false;
@@ -53,6 +57,8 @@ export class ProjectsService {
       }),
       catchError((err): Observable<HealthCheckStatus> => {
         const responseBody = err && err.message ? err.message : err;
+        // Split the error message to parse the error status out of the string.
+        // The Nest.js http service doesn't provide access to a status property when an error is returned
         const splitErrorMessage = err && err.message && err.message.split(' ').length ? err.message.split(' ') : [];
         let status = Number(splitErrorMessage[splitErrorMessage.length - 1]);
         if (!err.message.includes(('status code').toLowerCase()) || isNaN(status)) {
@@ -76,13 +82,16 @@ export class ProjectsService {
 
   private getStatusOverview(healthCheckStatuses: HealthCheckStatus[], projects: Project[]): StatusOverview {
     return projects.reduce((acc, project) => {
+      const projectHealthCheckStatuses = healthCheckStatuses.filter(hcStatus => hcStatus.projectName === project.name);
       acc[project.name] = {
-        status: healthCheckStatuses.find(hcStatus => hcStatus.projectName === project.name),
+        statuses: projectHealthCheckStatuses,
+        up: projectHealthCheckStatuses.every(hcStatus => hcStatus.up),
+        warning: projectHealthCheckStatuses.some(hcStatus => hcStatus.warning),
       };
       if (project.dependencies && project.dependencies.length) {
         acc[project.name].dependencies = this.getStatusOverview(healthCheckStatuses, project.dependencies);
-        acc[project.name].status.warning = Object.values(acc[project.name].dependencies).some((dep: ProjectStatus) => {
-          return !dep.status.up || dep.status.warning;
+        acc[project.name].warning = Object.values(acc[project.name].dependencies).some((dep: ProjectStatus) => {
+          return !dep.up || dep.warning;
         });
       }
       return acc;

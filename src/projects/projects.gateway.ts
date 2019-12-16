@@ -11,8 +11,8 @@ import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ProjectsService } from './projects.service';
 import ProjectsMonitorConfig from './interfaces/projectsMonitorConfig.interface';
-import { Observable, of, Subject } from 'rxjs';
-import { catchError, map, takeUntil, tap } from 'rxjs/operators';
+import { interval, Observable, of, Subject } from 'rxjs';
+import { catchError, map, startWith, takeUntil, tap } from 'rxjs/operators';
 import { ProjectsConstants } from './projects.constants';
 
 @WebSocketGateway(5005, { namespace: 'projects-monitor' })
@@ -21,6 +21,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   private logger: Logger = new Logger('ProjectsGateway');
   projectsSocket: Socket;
   unsubscribe$ = new Subject();
+  stopTimer$ = new Subject();
 
   constructor(private projectsService: ProjectsService) {}
 
@@ -36,15 +37,20 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   handleDisconnect(client: Socket): any {
     this.logger.log(`Client disconnected: ${client.id}`);
     this.unsubscribe$.next(true);
+    this.stopTimer$.next(true);
   }
 
-  @SubscribeMessage('msgToServer')
+  @SubscribeMessage('msgToServer:monitor')
   handleProjectsConfigMsg(@MessageBody() projectConfigs: string): Observable<WsResponse<any>> {
-    this.logger.log('received msgToServer\n' + projectConfigs);
+    this.logger.debug('received msgToServer\n' + projectConfigs);
     const parsedProjectConfigs: ProjectsMonitorConfig = JSON.parse(projectConfigs);
-    this.logger.debug('received msgToServer\n' + JSON.stringify(parsedProjectConfigs.projects[0]));
     return this.monitorProjects(parsedProjectConfigs.projects, parsedProjectConfigs.intervalLength).pipe(
-      map(data => ({event: 'msgToClient', data})),
+      tap(() => {
+        const intervalLength = parsedProjectConfigs.intervalLength;
+        this.stopTimer$.next(true);
+        this.startHealthCheckCountdown(intervalLength);
+      }),
+      map(data => ({event: 'msgToClient:monitor', data})),
       takeUntil(this.unsubscribe$),
     );
   }
@@ -53,11 +59,13 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   handleStopMonitorMsg(): WsResponse<string> {
     const data = 'Projects monitor stopped';
     this.unsubscribe$.next(true);
+    this.stopTimer$.next(true);
     this.logger.log('msgToClient:stopMonitor sent');
+    this.projectsSocket.emit('msgToClient:monitorCountdown', null);
     return {event: 'msgToClient:stopMonitor', data};
   }
 
-  monitorProjects(projects: any, intervalLength: number): Observable<unknown> {
+  private monitorProjects(projects: any, intervalLength: number): Observable<unknown> {
     this.logger.debug(`Monitoring projects for client every ${intervalLength} milliseconds.`);
     const minIntervalLength = ProjectsConstants.minMonitorInterval;
     // TODO - Make minimum intervalLength constant based on env (shorter for dev, longer for prod)
@@ -74,6 +82,25 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
         error: `Interval length is too short. Must be at least ${minIntervalLength}.`,
         status: null,
       });
+    }
+  }
+
+  private startHealthCheckCountdown(intervalLengthInMs: number) {
+    let intervalLength = intervalLengthInMs;
+    return interval(1000).pipe(
+      startWith(() => intervalLength = this.tickCountdown(intervalLength)),
+      tap(() => intervalLength = this.tickCountdown(intervalLength)),
+      takeUntil(this.stopTimer$),
+    ).subscribe();
+  }
+
+  private tickCountdown(intervalLength) {
+    if (intervalLength >= 1000) {
+      intervalLength -= 1000;
+      this.projectsSocket.emit('msgToClient:monitorCountdown', intervalLength);
+      return intervalLength;
+    } else {
+      this.stopTimer$.next(true);
     }
   }
 }

@@ -7,4 +7,5 @@ export default interface HealthCheck {
   requestBody?: any;
   successStatuses: number[];
   headers?: HealthCheckHeaders;
+  name?: string;
 }

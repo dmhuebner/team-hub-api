@@ -53,6 +53,8 @@ export class ProjectsService {
           up,
           projectName,
           warning,
+          successStatuses: healthCheck.successStatuses,
+          healthCheckName: healthCheck.name,
         };
       }),
       catchError((err): Observable<HealthCheckStatus> => {
@@ -75,6 +77,8 @@ export class ProjectsService {
           up,
           projectName,
           warning,
+          successStatuses: healthCheck.successStatuses,
+          healthCheckName: healthCheck.name,
         });
       }),
     );

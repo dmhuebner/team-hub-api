@@ -1,26 +1,35 @@
 import { HttpService, Injectable, Logger } from '@nestjs/common';
 import Project from './interfaces/project.interface';
-import { forkJoin, interval, Observable, of } from 'rxjs';
-import { catchError, map, startWith, switchMap, tap } from 'rxjs/operators';
+import { forkJoin, interval, Observable, of, Subject } from 'rxjs';
+import { catchError, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
 import HealthCheck from './interfaces/healthCheck.interface';
 import StatusOverview from './interfaces/statusOverview.interface';
 import { ProjectStatus } from './interfaces/projectStatus.interface';
 import CustomAxiosRequestConfig from './interfaces/customAxiosRequestConfig.interface';
+import { WsResponse } from '@nestjs/websockets';
 
 @Injectable()
 export class ProjectsService {
 
-  constructor(private http: HttpService) {}
-
   private logger: Logger = new Logger('ProjectsService');
+  projectsMonitor$: Observable<WsResponse>;
+  monitorUnsubscribe$ = new Subject();
+
+  constructor(private http: HttpService) {}
 
   monitorProjects(projects: Project[], intervalLength: number): Observable<StatusOverview> {
     return interval(intervalLength).pipe(
       startWith(() => this.getAllHealthChecks(projects)),
       switchMap(() => this.getAllHealthChecks(projects)),
       map(healthCheckStatuses => this.getStatusOverview(healthCheckStatuses, projects)),
+      tap(f => this.logger.debug('MONITORING: ')),
+      takeUntil(this.monitorUnsubscribe$),
     );
+  }
+
+  setProjectsMonitor(monitor$: Observable<any>) {
+    this.projectsMonitor$ = monitor$;
   }
 
   private getAllHealthChecks(projectsConfig: Project[], healthCheckCalls = []): Observable<any> {

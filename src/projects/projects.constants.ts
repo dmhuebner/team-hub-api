@@ -1,3 +1,3 @@
 export const ProjectsConstants = {
-  minMonitorInterval: 5000,
+  minMonitorInterval: 10000,
 };

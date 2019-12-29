@@ -1,4 +1,5 @@
 import { HealthCheckMethod } from './healthCheckMethod.type';
+import HealthCheckSuccessCriteria from './health-check-success-criteria.interface';
 
 export default interface HealthCheckStatus {
   responseBody: any;
@@ -9,6 +10,7 @@ export default interface HealthCheckStatus {
   up: boolean;
   projectName: string;
   warning: boolean;
-  successStatuses: number[];
+  invalidResponseBody?: boolean; // based on the successCriteria
+  successCriteria: HealthCheckSuccessCriteria;
   healthCheckName?: string;
 }

@@ -8,6 +8,7 @@ import StatusOverview from './interfaces/statusOverview.interface';
 import { ProjectStatus } from './interfaces/projectStatus.interface';
 import CustomAxiosRequestConfig from './interfaces/customAxiosRequestConfig.interface';
 import { WsResponse } from '@nestjs/websockets';
+import HealthCheckSuccessCriteria from './interfaces/health-check-success-criteria.interface';
 
 @Injectable()
 export class ProjectsService {
@@ -42,7 +43,7 @@ export class ProjectsService {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
     });
-    return forkJoin(healthCheckCalls);
+    return forkJoin(healthCheckCalls).pipe(tap(healthCheckStatuses => this.logger.debug(healthCheckStatuses)));
   }
 
   // Makes an individual healthCheck call and returns an Observable of a HealthCheckStatus
@@ -52,7 +53,9 @@ export class ProjectsService {
     const warning = null;
     return this.getHealthCheckCall(healthCheck).pipe(
       map((res): HealthCheckStatus => {
-        up = healthCheck.successStatuses.includes(res.status);
+        // Check successCriteria
+        const successCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, res.status, res.data);
+        up = successCriteriaCheck.up;
         return {
           responseBody: res.data,
           status: res.status,
@@ -62,7 +65,8 @@ export class ProjectsService {
           up,
           projectName,
           warning,
-          successStatuses: healthCheck.successStatuses,
+          invalidResponseBody: successCriteriaCheck.invalidResponseBody,
+          successCriteria: healthCheck.successCriteria,
           healthCheckName: healthCheck.name,
         };
       }),
@@ -76,7 +80,9 @@ export class ProjectsService {
           // If message does not include 'status code' text or if last word is not a status - set status to null;
           status = null;
         }
-        up = healthCheck.successStatuses.includes(status);
+        // Check successCriteria
+        const successCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, status, err.message);
+        up = successCriteriaCheck.up;
         return of({
           responseBody,
           status,
@@ -86,7 +92,8 @@ export class ProjectsService {
           up,
           projectName,
           warning,
-          successStatuses: healthCheck.successStatuses,
+          invalidResponseBody: successCriteriaCheck.invalidResponseBody,
+          successCriteria: healthCheck.successCriteria,
           healthCheckName: healthCheck.name,
         });
       }),
@@ -125,4 +132,50 @@ export class ProjectsService {
         return this.http.get(healthCheck.path, config);
     }
   }
+
+  // TODO refactor to clean up?
+  private checkSuccessCriteria(successCriteria: HealthCheckSuccessCriteria, status: number, healthCheckResponseBody): SuccessCriteriaCheck {
+    let up = false;
+    let invalidResponseBody = false;
+
+    if (successCriteria.successResponseBody) {
+      if (successCriteria.successResponseBody.type === 'string') {
+        if (successCriteria.successResponseBody.responseBodyContains &&
+          typeof healthCheckResponseBody === 'string' &&
+          healthCheckResponseBody.indexOf(successCriteria.successResponseBody.responseBodyContains) !== -1) {
+          up = true;
+        } else {
+          up = (successCriteria.successResponseBody.responseBodyEquals &&
+            healthCheckResponseBody === successCriteria.successResponseBody.responseBodyEquals);
+        }
+      } else if (successCriteria.successResponseBody.type === 'json') {
+        if (successCriteria.successResponseBody.responseBodyContains) {
+          // TODO implement a drill down json contains situation
+          up = true;
+        } else {
+          up = (successCriteria.successResponseBody.responseBodyEquals &&
+            JSON.stringify(healthCheckResponseBody) === successCriteria.successResponseBody.responseBodyEquals);
+        }
+      }
+
+      // If its not up after the checks above its due to the response body being invalid
+      if (!up) {
+        invalidResponseBody = true;
+      }
+    }
+
+    // Set 'up' based on successStatuses
+    up = successCriteria.successStatuses.includes(status);
+    // Set 'up' to false if invalidResponseBody is true;
+    if (invalidResponseBody) {
+      up = false;
+    }
+
+    return {up, invalidResponseBody};
+  }
+}
+
+interface SuccessCriteriaCheck {
+  up: boolean;
+  invalidResponseBody: boolean;
 }

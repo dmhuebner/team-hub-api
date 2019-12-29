@@ -6,5 +6,5 @@ export default interface HealthCheckSuccessCriteria {
 interface HealthCheckSuccessResponseBody {
   type: 'string' | 'json';
   responseBodyEquals?: string;
-  responseBodyContains?: string;
+  responseBodyContains?: string[];
 }

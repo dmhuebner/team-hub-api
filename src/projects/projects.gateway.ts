@@ -4,15 +4,15 @@ import {
   OnGatewayDisconnect,
   OnGatewayInit,
   SubscribeMessage,
-  WebSocketGateway,
+  WebSocketGateway, WebSocketServer,
   WsResponse,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ProjectsService } from './projects.service';
 import ProjectsMonitorConfig from './interfaces/projectsMonitorConfig.interface';
-import { interval, Observable, of, Subject } from 'rxjs';
-import { catchError, map, startWith, takeUntil, tap } from 'rxjs/operators';
+import { interval, Observable, of, Subject, Subscription } from 'rxjs';
+import { catchError, map, shareReplay, startWith, takeUntil, tap } from 'rxjs/operators';
 import { ProjectsConstants } from './projects.constants';
 
 @WebSocketGateway(5005, { namespace: 'projects-monitor' })
@@ -20,6 +20,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   private logger: Logger = new Logger('ProjectsGateway');
   projectsSocket: Socket;
+  @WebSocketServer() wsServer;
   unsubscribe$ = new Subject();
   stopTimer$ = new Subject();
 
@@ -36,33 +37,44 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   handleDisconnect(client: Socket): any {
     this.logger.log(`Client disconnected: ${client.id}`);
-    this.unsubscribe$.next(true);
-    this.stopTimer$.next(true);
   }
 
   @SubscribeMessage('msgToServer:monitor')
   handleProjectsConfigMsg(@MessageBody() projectConfigs: string): Observable<WsResponse<any>> {
-    this.logger.debug('received msgToServer\n' + projectConfigs);
+    this.logger.debug('received msgToServer\n');
     const parsedProjectConfigs: ProjectsMonitorConfig = JSON.parse(projectConfigs);
-    return this.monitorProjects(parsedProjectConfigs.projects, parsedProjectConfigs.intervalLength).pipe(
-      tap(() => {
-        const intervalLength = parsedProjectConfigs.intervalLength;
-        this.stopTimer$.next(true);
-        this.startHealthCheckCountdown(intervalLength);
-      }),
-      map(data => ({event: 'msgToClient:monitor', data})),
-      takeUntil(this.unsubscribe$),
-    );
+    if (this.projectsService.projectsMonitor$) {
+      this.logger.debug('USING EXISTING MONITOR');
+      return this.projectsService.projectsMonitor$;
+    } else {
+      this.logger.debug(projectConfigs);
+      this.logger.debug('MAKING NEW MONITOR');
+      const monitor$ = this.monitorProjects(parsedProjectConfigs.projects, parsedProjectConfigs.intervalLength).pipe(
+        tap(() => {
+          const intervalLength = parsedProjectConfigs.intervalLength;
+          this.stopTimer$.next(true);
+          this.startHealthCheckCountdown(intervalLength);
+        }),
+        map(data => ({event: 'msgToClient:monitor', data})),
+        tap(data => this.wsServer.emit(data)),
+        shareReplay(1),
+        takeUntil(this.unsubscribe$),
+      );
+      this.projectsService.setProjectsMonitor(monitor$);
+      return monitor$;
+    }
   }
 
   @SubscribeMessage('msgToServer:stopMonitor')
-  handleStopMonitorMsg(): WsResponse<string> {
+  handleStopMonitorMsg() {
     const data = 'Projects monitor stopped';
     this.unsubscribe$.next(true);
+    this.projectsService.monitorUnsubscribe$.next(true);
     this.stopTimer$.next(true);
+    this.projectsService.setProjectsMonitor(null);
+    this.wsServer.emit('msgToClient:monitorCountdown', null);
+    this.wsServer.emit('msgToClient:stopMonitor', data);
     this.logger.log('msgToClient:stopMonitor sent');
-    this.projectsSocket.emit('msgToClient:monitorCountdown', null);
-    return {event: 'msgToClient:stopMonitor', data};
   }
 
   private monitorProjects(projects: any, intervalLength: number): Observable<unknown> {
@@ -97,7 +109,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   private tickCountdown(intervalLength) {
     if (intervalLength >= 1000) {
       intervalLength -= 1000;
-      this.projectsSocket.emit('msgToClient:monitorCountdown', intervalLength);
+      this.wsServer.emit('msgToClient:monitorCountdown', intervalLength);
       return intervalLength;
     } else {
       this.stopTimer$.next(true);

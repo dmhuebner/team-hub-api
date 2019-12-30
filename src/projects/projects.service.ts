@@ -9,6 +9,7 @@ import { ProjectStatus } from './interfaces/projectStatus.interface';
 import CustomAxiosRequestConfig from './interfaces/customAxiosRequestConfig.interface';
 import { WsResponse } from '@nestjs/websockets';
 import HealthCheckSuccessCriteria from './interfaces/health-check-success-criteria.interface';
+import JsonContainsMap from './interfaces/json-contains-map.interface';
 
 @Injectable()
 export class ProjectsService {
@@ -43,7 +44,7 @@ export class ProjectsService {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
     });
-    return forkJoin(healthCheckCalls).pipe(tap(healthCheckStatuses => this.logger.debug(healthCheckStatuses)));
+    return forkJoin(healthCheckCalls);
   }
 
   // Makes an individual healthCheck call and returns an Observable of a HealthCheckStatus
@@ -142,16 +143,18 @@ export class ProjectsService {
       if (successCriteria.successResponseBody.type === 'string') {
         if (successCriteria.successResponseBody.responseBodyContains &&
           typeof healthCheckResponseBody === 'string' &&
-          healthCheckResponseBody.indexOf(successCriteria.successResponseBody.responseBodyContains) !== -1) {
+          successCriteria.successResponseBody.responseBodyContains.every(content => healthCheckResponseBody.indexOf(content as string) !== -1)) {
           up = true;
         } else {
           up = (successCriteria.successResponseBody.responseBodyEquals &&
             healthCheckResponseBody === successCriteria.successResponseBody.responseBodyEquals);
         }
       } else if (successCriteria.successResponseBody.type === 'json') {
-        if (successCriteria.successResponseBody.responseBodyContains) {
-          // TODO implement a drill down json contains situation
-          up = true;
+        if (successCriteria.successResponseBody.responseBodyContains && typeof healthCheckResponseBody !== 'string') {
+          up = this.searchObjectForSuccessCriteriaProps(
+            healthCheckResponseBody,
+            successCriteria.successResponseBody.responseBodyContains as JsonContainsMap[],
+          );
         } else {
           up = (successCriteria.successResponseBody.responseBodyEquals &&
             JSON.stringify(healthCheckResponseBody) === successCriteria.successResponseBody.responseBodyEquals);
@@ -172,6 +175,24 @@ export class ProjectsService {
     }
 
     return {up, invalidResponseBody};
+  }
+
+  private searchObjectForSuccessCriteriaProps(objectToSearch: any, containsList: JsonContainsMap[]): boolean {
+    const searchResults: boolean[] = [];
+    containsList.forEach(containsMap => {
+      if (containsMap.property.indexOf('.') !== -1) {
+        const nestedProps = containsMap.property.split('.');
+        nestedProps.reduce((obj, prop, i) => {
+          if (nestedProps.length === i + 1) {
+            searchResults.push(obj[prop] === containsMap.expectedValue);
+          }
+          return obj[prop];
+        }, objectToSearch);
+      } else {
+        searchResults.push(objectToSearch[containsMap.property] === containsMap.expectedValue);
+      }
+    });
+    return searchResults.every(result => result);
   }
 }
 

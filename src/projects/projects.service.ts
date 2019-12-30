@@ -1,7 +1,7 @@
 import { HttpService, Injectable, Logger } from '@nestjs/common';
 import Project from './interfaces/project.interface';
 import { forkJoin, interval, Observable, of, Subject } from 'rxjs';
-import { catchError, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
+import { catchError, distinct, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
 import HealthCheck from './interfaces/healthCheck.interface';
 import StatusOverview from './interfaces/statusOverview.interface';
@@ -44,7 +44,7 @@ export class ProjectsService {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
     });
-    return forkJoin(healthCheckCalls);
+    return forkJoin(healthCheckCalls).pipe(distinct(hc => hc.projectName));
   }
 
   // Makes an individual healthCheck call and returns an Observable of a HealthCheckStatus

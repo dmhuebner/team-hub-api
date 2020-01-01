@@ -14,6 +14,8 @@ import ProjectsMonitorConfig from './interfaces/projectsMonitorConfig.interface'
 import { interval, Observable, of, Subject, Subscription } from 'rxjs';
 import { catchError, map, shareReplay, startWith, takeUntil, tap } from 'rxjs/operators';
 import { ProjectsConstants } from './projects.constants';
+import Project from './interfaces/project.interface';
+import LoginForToken from './interfaces/login-for-token.interface';
 
 @WebSocketGateway(5005, { namespace: 'projects-monitor' })
 export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect {
@@ -41,15 +43,18 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
   @SubscribeMessage('msgToServer:monitor')
   handleProjectsConfigMsg(@MessageBody() projectConfigs: string): Observable<WsResponse<any>> {
-    this.logger.debug('received msgToServer\n');
+    this.logger.log('received msgToServer\n');
     const parsedProjectConfigs: ProjectsMonitorConfig = JSON.parse(projectConfigs);
     if (this.projectsService.projectsMonitor$) {
       this.logger.debug('USING EXISTING MONITOR');
       return this.projectsService.projectsMonitor$;
     } else {
+      this.logger.debug('MAKING NEW MONITOR\n');
       this.logger.debug(projectConfigs);
-      this.logger.debug('MAKING NEW MONITOR');
-      const monitor$ = this.monitorProjects(parsedProjectConfigs.projects, parsedProjectConfigs.intervalLength).pipe(
+      const monitor$ = this.monitorProjects(
+        parsedProjectConfigs.projects,
+        parsedProjectConfigs.intervalLength,
+        parsedProjectConfigs.loginForToken).pipe(
         tap(() => {
           const intervalLength = parsedProjectConfigs.intervalLength;
           this.stopTimer$.next(true);
@@ -77,14 +82,15 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     this.logger.log('msgToClient:stopMonitor sent');
   }
 
-  private monitorProjects(projects: any, intervalLength: number): Observable<unknown> {
+  private monitorProjects(projects: Project[], intervalLength: number, loginConfig: LoginForToken): Observable<unknown> {
     this.logger.debug(`Monitoring projects for client every ${intervalLength} milliseconds.`);
     const minIntervalLength = ProjectsConstants.minMonitorInterval;
     // TODO - Make minimum intervalLength constant based on env (shorter for dev, longer for prod)
     if (intervalLength && intervalLength >= minIntervalLength) {
-      return this.projectsService.monitorProjects(projects, intervalLength).pipe(
+      return this.projectsService.monitorProjects(projects, intervalLength, loginConfig).pipe(
         tap(() => this.logger.log('msgToClient sent')),
         catchError(err => {
+          this.logger.error('Monitor Error:');
           this.logger.error(err);
           return err;
         }),

@@ -1,6 +1,6 @@
 import { HttpService, Injectable, Logger } from '@nestjs/common';
 import Project from './interfaces/project.interface';
-import { forkJoin, interval, Observable, of, Subject } from 'rxjs';
+import { BehaviorSubject, forkJoin, interval, Observable, of, Subject } from 'rxjs';
 import { catchError, distinct, map, startWith, switchMap, takeUntil, tap } from 'rxjs/operators';
 import HealthCheckStatus from './interfaces/healthCheckStatus.interface';
 import HealthCheck from './interfaces/healthCheck.interface';
@@ -10,6 +10,8 @@ import CustomAxiosRequestConfig from './interfaces/customAxiosRequestConfig.inte
 import { WsResponse } from '@nestjs/websockets';
 import HealthCheckSuccessCriteria from './interfaces/health-check-success-criteria.interface';
 import JsonContainsMap from './interfaces/json-contains-map.interface';
+import LoginForToken from './interfaces/login-for-token.interface';
+import HttpConfig from './interfaces/http-config.interface';
 
 @Injectable()
 export class ProjectsService {
@@ -17,21 +19,35 @@ export class ProjectsService {
   private logger: Logger = new Logger('ProjectsService');
   projectsMonitor$: Observable<WsResponse>;
   monitorUnsubscribe$ = new Subject();
+  currentGeneralTokenSubject = new BehaviorSubject<string>('');
+  currentGeneralToken$: Observable<string> = this.currentGeneralTokenSubject.asObservable();
+  currentGeneralToken: string;
 
   constructor(private http: HttpService) {}
 
-  monitorProjects(projects: Project[], intervalLength: number): Observable<StatusOverview> {
+  // Projects Monitor entry point
+  monitorProjects(projects: Project[], intervalLength: number, loginConfig: LoginForToken): Observable<StatusOverview> {
     return interval(intervalLength).pipe(
-      startWith(() => this.getAllHealthChecks(projects)),
-      switchMap(() => this.getAllHealthChecks(projects)),
-      map(healthCheckStatuses => this.getStatusOverview(healthCheckStatuses, projects)),
-      tap(f => this.logger.debug('MONITORING: ')),
+      startWith(() => this.runHealthCheckSequence(projects, loginConfig)),
+      switchMap(() => this.runHealthCheckSequence(projects, loginConfig)),
       takeUntil(this.monitorUnsubscribe$),
     );
   }
 
   setProjectsMonitor(monitor$: Observable<any>) {
     this.projectsMonitor$ = monitor$;
+  }
+
+  // 1) Gets a token if there is a loginForToken config.
+  // 2) Get responses for all health checks.
+  // 3) Build a Status Overview object to return
+  private runHealthCheckSequence(projects: Project[], loginConfig: LoginForToken): Observable<any> {
+    return this.getToken(loginConfig).pipe(
+      switchMap(() => this.getAllHealthChecks(projects)),
+      map((healthCheckStatuses: HealthCheckStatus[]) => this.getStatusOverview(healthCheckStatuses, projects)),
+      tap(f => this.logger.debug('MONITORING: ')),
+      tap(f => this.logger.debug('GENERAL TOKEN set: ' + this.currentGeneralToken)),
+    );
   }
 
   private getAllHealthChecks(projectsConfig: Project[], healthCheckCalls = []): Observable<any> {
@@ -44,18 +60,19 @@ export class ProjectsService {
         this.getAllHealthChecks(projConfig.dependencies, healthCheckCalls);
       }
     });
-    return forkJoin(healthCheckCalls).pipe(distinct(hc => hc.projectName));
+    return forkJoin(healthCheckCalls).pipe(distinct((hc) => hc.projectName));
   }
 
   // Makes an individual healthCheck call and returns an Observable of a HealthCheckStatus
   private getHealthCheck(healthCheck: HealthCheck, projectName: string): Observable<HealthCheckStatus> {
     const timestamp = new Date().toISOString();
-    let up = false;
+    const token = healthCheck.useGeneralToken ? this.currentGeneralToken : null;
     const warning = null;
-    return this.getHealthCheckCall(healthCheck).pipe(
+    let up = false;
+    return this.getHttpCall(healthCheck, token).pipe(
       map((res): HealthCheckStatus => {
         // Check successCriteria
-        const successCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, res.status, res.data);
+        const successCriteriaCheck: SuccessCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, res.status, res.data);
         up = successCriteriaCheck.up;
         return {
           responseBody: res.data,
@@ -82,7 +99,7 @@ export class ProjectsService {
           status = null;
         }
         // Check successCriteria
-        const successCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, status, err.message);
+        const successCriteriaCheck: SuccessCriteriaCheck = this.checkSuccessCriteria(healthCheck.successCriteria, status, err.message);
         up = successCriteriaCheck.up;
         return of({
           responseBody,
@@ -101,6 +118,8 @@ export class ProjectsService {
     );
   }
 
+  // Build up a StatusOverview object that matches the same project/dependency hierarchy as the projects config
+  // by matching the statuses to their projects
   private getStatusOverview(healthCheckStatuses: HealthCheckStatus[], projects: Project[]): StatusOverview {
     return projects.reduce((acc, project) => {
       const projectHealthCheckStatuses = healthCheckStatuses.filter(hcStatus => hcStatus.projectName === project.name);
@@ -119,18 +138,31 @@ export class ProjectsService {
     }, {});
   }
 
-  private getHealthCheckCall(healthCheck: HealthCheck): Observable<any> {
+  private getHttpCall(httpConfig: HttpConfig, token?: string): Observable<any> {
     const config: CustomAxiosRequestConfig = {};
-    if (healthCheck.headers) {
-      config.headers = healthCheck.headers;
+    if (httpConfig.headers) {
+      config.headers = httpConfig.headers;
+    } else {
+      config.headers = {};
     }
-    switch (healthCheck.method.toLowerCase()) {
+
+    // Set the currentGeneralToken to be used for authorization if there is one
+    if (token) {
+      // TODO make Bearer token type dynamic - type property is already on loginForToken config object
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // this.logger.debug('CONFIG');
+    // this.logger.debug(httpConfig.path);
+    // this.logger.debug(config);
+
+    switch (httpConfig.method.toLowerCase()) {
       case 'post':
-        return this.http.post(healthCheck.path, healthCheck.requestBody, config);
+        return this.http.post(httpConfig.path, httpConfig.requestBody, config);
       case 'put':
-        return this.http.put(healthCheck.path, healthCheck.requestBody, config);
+        return this.http.put(httpConfig.path, httpConfig.requestBody, config);
       default:
-        return this.http.get(healthCheck.path, config);
+        return this.http.get(httpConfig.path, config);
     }
   }
 
@@ -177,6 +209,9 @@ export class ProjectsService {
     return {up, invalidResponseBody};
   }
 
+  // This function is used for matching certain property values with certain properties on a health check response body
+  // It takes a list of JsonContainMaps that have a "property" prop to specify where in the object to find the expected value
+  // It also takes an objectToSearch which is the object (in our case the response body) that we want to search through
   private searchObjectForSuccessCriteriaProps(objectToSearch: any, containsList: JsonContainsMap[]): boolean {
     const searchResults: boolean[] = [];
     containsList.forEach(containsMap => {
@@ -193,6 +228,47 @@ export class ProjectsService {
       }
     });
     return searchResults.every(result => result);
+  }
+
+  // Get a general login token to be used with certain specified health checks
+  private getToken(loginConfig: LoginForToken): Observable<any> {
+    return this.getHttpCall(loginConfig).pipe(
+      // tap(getTokenResp => {this.logger.debug('getTokenResp'); this.logger.debug(getTokenResp.data); }),
+      map(getTokenResponse => this.getTokenFromObject(getTokenResponse.data, loginConfig)),
+      tap(token => {
+        this.currentGeneralTokenSubject.next(token);
+        this.currentGeneralToken = token;
+      }),
+      catchError(err => of(this.logger.error(err))),
+    );
+  }
+
+  private getTokenFromObject(tokenResponse: any, loginConfig: LoginForToken): string {
+    if (!loginConfig.tokenLocationInResponse) {
+      return tokenResponse;
+    } else {
+      return this.actOnObjectProperty(tokenResponse, loginConfig.tokenLocationInResponse, (propertyValue) => {
+        return propertyValue;
+      });
+    }
+  }
+
+  private actOnObjectProperty(objectToActOn: any, propertyTrace: string, callback: (propertyValue: any, directParentObj: any) => any): any {
+    if (propertyTrace.indexOf('.') !== -1) {
+      let propertyValue;
+      let parentObject;
+      const nestedProps = propertyTrace.split('.');
+      nestedProps.reduce((obj, prop, i) => {
+        if (nestedProps.length === i + 1) {
+          propertyValue = obj[prop];
+          parentObject = obj;
+        }
+        return obj[prop];
+      }, objectToActOn);
+      return callback(propertyValue, parentObject);
+    } else {
+      return callback(objectToActOn[propertyTrace], objectToActOn);
+    }
   }
 }
 

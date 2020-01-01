@@ -1,12 +1,8 @@
-import { HealthCheckMethod } from './healthCheckMethod.type';
-import HealthCheckHeaders from './healthCheckHeaders.interface';
 import HealthCheckSuccessCriteria from './health-check-success-criteria.interface';
+import HttpConfig from './http-config.interface';
 
-export default interface HealthCheck {
-  path: string;
-  method: HealthCheckMethod;
-  requestBody?: any;
+export default interface HealthCheck extends HttpConfig {
   successCriteria: HealthCheckSuccessCriteria;
-  headers?: HealthCheckHeaders;
   name?: string;
+  useGeneralToken: boolean;
 }

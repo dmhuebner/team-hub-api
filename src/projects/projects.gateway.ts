@@ -83,7 +83,7 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   private monitorProjects(projects: Project[], intervalLength: number, loginConfig: LoginForToken): Observable<unknown> {
-    this.logger.debug(`Monitoring projects for client every ${intervalLength} milliseconds.`);
+    this.logger.debug(`Monitoring projects for client every ${intervalLength} seconds.`);
     const minIntervalLength = ProjectsConstants.minMonitorInterval;
     // TODO - Make minimum intervalLength constant based on env (shorter for dev, longer for prod)
     if (intervalLength && intervalLength >= minIntervalLength) {
@@ -103,8 +103,8 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
     }
   }
 
-  private startHealthCheckCountdown(intervalLengthInMs: number) {
-    let intervalLength = intervalLengthInMs;
+  private startHealthCheckCountdown(intervalLengthInSec: number) {
+    let intervalLength = intervalLengthInSec;
     return interval(1000).pipe(
       startWith(() => intervalLength = this.tickCountdown(intervalLength)),
       tap(() => intervalLength = this.tickCountdown(intervalLength)),
@@ -113,8 +113,8 @@ export class ProjectsGateway implements OnGatewayInit, OnGatewayConnection, OnGa
   }
 
   private tickCountdown(intervalLength) {
-    if (intervalLength >= 1000) {
-      intervalLength -= 1000;
+    if (intervalLength >= 1) {
+      intervalLength -= 1;
       this.wsServer.emit('msgToClient:monitorCountdown', intervalLength);
       return intervalLength;
     } else {

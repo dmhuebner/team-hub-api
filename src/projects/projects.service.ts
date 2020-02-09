@@ -27,7 +27,8 @@ export class ProjectsService {
 
   // Projects Monitor entry point
   monitorProjects(projects: Project[], intervalLength: number, loginConfig: LoginForToken): Observable<StatusOverview> {
-    return interval(intervalLength).pipe(
+    const intervalLengthInMs = intervalLength * 1000;
+    return interval(intervalLengthInMs).pipe(
       startWith(() => this.runHealthCheckSequence(projects, loginConfig)),
       switchMap(() => this.runHealthCheckSequence(projects, loginConfig)),
       takeUntil(this.monitorUnsubscribe$),
@@ -40,13 +41,12 @@ export class ProjectsService {
 
   // 1) Gets a token if there is a loginForToken config.
   // 2) Get responses for all health checks.
-  // 3) Build a Status Overview object to return
+  // 3) Build a Status Overview object to return.
   private runHealthCheckSequence(projects: Project[], loginConfig: LoginForToken): Observable<any> {
     return this.getToken(loginConfig).pipe(
       switchMap(() => this.getAllHealthChecks(projects)),
       map((healthCheckStatuses: HealthCheckStatus[]) => this.getStatusOverview(healthCheckStatuses, projects)),
-      tap(f => this.logger.debug('MONITORING: ')),
-      tap(f => this.logger.debug('GENERAL TOKEN set: ' + this.currentGeneralToken)),
+      tap(f => this.logger.debug('MONITORING:\nGENERAL TOKEN set: ' + this.currentGeneralToken)),
     );
   }
 
@@ -247,9 +247,7 @@ export class ProjectsService {
     if (!loginConfig.tokenLocationInResponse) {
       return tokenResponse;
     } else {
-      return this.actOnObjectProperty(tokenResponse, loginConfig.tokenLocationInResponse, (propertyValue) => {
-        return propertyValue;
-      });
+      return this.actOnObjectProperty(tokenResponse, loginConfig.tokenLocationInResponse, (propertyValue) => propertyValue);
     }
   }
 

@@ -1,4 +1,4 @@
 export default interface JsonContainsMap {
-  property: string;
+  property: string; // foo || foo.bar || foo.bar.stuff.thing
   expectedValue: any;
 }
